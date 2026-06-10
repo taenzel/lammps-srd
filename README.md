@@ -55,13 +55,13 @@ make mpi -j <number of procs>
 Please cite the appropriate LAMMPS references, the corresponding article from the Palmer group, their github repository, this repository if you used its new features, and whatever else you deem appropriate.
 
 ## Collision step and thermostat
-The LAMMPS documentation and the research articles provide some information on their SRD collision and thermostat scheme. By the way, additional thermostats may be found in [this code](https://matsci.org/t/inducing-flow-in-an-srd-fluid/25810/7). The following provides more details about the SRD thermostat and what is meant with profile-biased and -unbiased.
+The [LAMMPS documentation](https://docs.lammps.org/fix_srd.html) and the [research articles](https://docs.lammps.org/fix_srd.html#default) provide some information on their SRD collision and thermostat scheme. By the way, additional thermostats may be found in [this code](https://matsci.org/t/inducing-flow-in-an-srd-fluid/25810/7). The following provides more details about the SRD thermostat and what is meant with profile-biased and -unbiased.
 
 In each SRD collision cell $c$,
 
 - $N_c$ is the number of particles (solvent and `small` colloids) in the cell,
 - $M_c = \sum_{i \in c} m_i$ is the total mass in the cell,
-- $\mathbf{v}_c = \frac{1}{M_c}\sum_{i \in c} m_i \mathbf{v}_i$ is the cell center-of-mass velocity,
+- $\mathbf{v}_c$ $= \frac{1}{M_c}\sum_{i \in c}$ $ m_i \mathbf{v}_i $ is the cell center-of-mass velocity,
 - $T_c$ is the cell temperature measured relative to $\mathbf{v}_c$,
 - $T_0$ is the target temperature
 - $\zeta_c = \sqrt{\frac{T_0}{T_c}}$ is the rescaling factor of the thermostat
@@ -77,7 +77,7 @@ $$
 where $\mathbf{u}(\mathbf{r}_c)$ is the imposed streaming velocity at the cell center $\mathbf{r}_c$. For simple shear flow with flow in $x$ and gradient in $y$,
 
 $$
-\mathbf{u}(\mathbf{r}_c) = \dot{\gamma}\, y_c\, \hat{\mathbf{x}}.
+\mathbf{u}(\mathbf{r}_c) = \dot{\gamma} y_c \hat{\mathbf{x}}.
 $$
 
 The velocity profile is thus not a consequence of the Lees-Edwards boudary conditions of `fix deform`, but artificially imposed during the thermostatting.
