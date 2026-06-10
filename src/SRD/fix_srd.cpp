@@ -23,7 +23,8 @@
 */
 
 /*
-  Updated by T.Ikeda (Kyoto Institute Of Technology) for new ver.
+  Updated by T.Ikeda (Kyoto Institute Of Technology) for new version
+  Updated by Victor Tänzel for profile-unbiased thermostat
 */
 
 
@@ -129,6 +130,7 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   shiftuser = SHIFT_NO;
   shiftseed = 0;
   tstat = 0;
+  unbiasflag = 0;
   rescale_rotate = rescale_collide = 1;
   mpcdat = 0;                                                        //JCP: Default to no MPCD Andersen thermostat
   smallexist = 0;                                                    //JCP: Default to no small particles
@@ -215,6 +217,12 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
       else if (strcmp(arg[iarg+1],"yes") == 0) tstat = 1;
       else error->all(FLERR,"Illegal fix srd command");
       iarg += 2;
+    } else if (strcmp(arg[iarg], "unbiased") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix srd command: stream");
+      if (strcmp(arg[iarg+1],"no") == 0) unbiasflag = 0;
+      else if (strcmp(arg[iarg+1],"yes") == 0) unbiasflag = 1;
+      else error->all(FLERR,"Illegal fix srd command");
+      iarg += 2;  
     } else if (strcmp(arg[iarg],"rescale") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix srd command");
       if (strcmp(arg[iarg+1],"no") == 0) 
@@ -269,6 +277,7 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
     error->all(FLERR,"Illegal fix srd command");
   if ((shiftuser == SHIFT_YES || shiftuser == SHIFT_POSSIBLE) &&
       shiftseed <= 0) error->all(FLERR,"Illegal fix srd command");
+  if (unbiasflag && !tstat) error->all(FLERR, "PUT requires tstat");
 
   // initialize Marsaglia RNG with processor-unique seed
 
@@ -1017,6 +1026,8 @@ void FixSRD::reset_velocities()
   double vsq,tbin,scale;
   double *vave,*xlamda;
   double vstream[3];
+  double *h_rate = domain->h_rate;
+  double *h_ratelo = domain->h_ratelo;
   
   // if requested, perform a dynamic shift of bin positions
 
@@ -1064,6 +1075,22 @@ void FixSRD::reset_velocities()
       iz = static_cast<int> ((x[i][2]-corner[2])*bininv1z);
       iz = MAX(iz,binlo[2]);
       iz = MIN(iz,binhi[2]);
+
+      if (deformflag) {
+        // shift velocities in last bins
+        if (domain->xperiodic && ix == nbin1x) {
+          v[i][0] -= h_rate[0];
+        }
+        if (domain->yperiodic && iy == nbin1y) {
+          v[i][0] -= h_rate[5];
+          v[i][1] -= h_rate[1];
+        }
+        if (domain->zperiodic && iz == nbin1z) {
+          v[i][0] -= h_rate[4];
+          v[i][1] -= h_rate[3];
+          v[i][2] -= h_rate[2];
+        }
+      }
 
       ibin = (iz-binlo[2])*nbiny*nbinx + (iy-binlo[1])*nbinx + (ix-binlo[0]);
       binnext[i] = binhead[ibin];
@@ -1119,7 +1146,7 @@ void FixSRD::reset_velocities()
   int dof_temp = 1;
   int dof_tstat;
   if (tstat) {
-    if (deformflag) dof_tstat = dof_temp = 0;
+    if (deformflag && !unbiasflag) dof_tstat = dof_temp = 0;
     else dof_tstat = 1;
   }
 
@@ -1127,8 +1154,6 @@ void FixSRD::reset_velocities()
   srd_bin_count = 0;
 
   if (dimension == 2) axis = 2;
-  double *h_rate = domain->h_rate;
-  double *h_ratelo = domain->h_ratelo;
 
   for (i = 0; i < nbins; i++) {
     vbin[i].value[0] = 0.0;
@@ -1178,7 +1203,7 @@ void FixSRD::reset_velocities()
 
       vave = vbin[i].vsum;
 
-      if (deformflag) {
+      if (deformflag && !unbiasflag) {
         xlamda = vbin[i].xctr;
         vstream[0] = h_rate[0]*xlamda[0] + h_rate[5]*xlamda[1] +
           h_rate[4]*xlamda[2] + h_ratelo[0];
@@ -1235,6 +1260,38 @@ void FixSRD::reset_velocities()
         }
       }
   }
+
+  // undo velocity remap (only if using PUT or tstat no)
+  if (deformflag && (unbiasflag || !tstat)) {
+    domain->x2lamda(nlocal);
+    for (i = 0; i < nlocal; i++) {
+      if (mask[i] & groupbit) {
+        ix = static_cast<int>((x[i][0] - corner[0]) * bininv1x);
+        ix = MAX(ix, binlo[0]);
+        ix = MIN(ix, binhi[0]);
+        iy = static_cast<int>((x[i][1] - corner[1]) * bininv1y);
+        iy = MAX(iy, binlo[1]);
+        iy = MIN(iy, binhi[1]);
+        iz = static_cast<int>((x[i][2] - corner[2]) * bininv1z);
+        iz = MAX(iz, binlo[2]);
+        iz = MIN(iz, binhi[2]);
+
+        if (domain->xperiodic && ix == nbin1x) {
+          v[i][0] += h_rate[0];
+        }
+        if (domain->yperiodic && iy == nbin1y) {
+          v[i][0] += h_rate[5];
+          v[i][1] += h_rate[1];
+        }
+        if (domain->zperiodic && iz == nbin1z) {
+          v[i][0] += h_rate[4];
+          v[i][1] += h_rate[3];
+          v[i][2] += h_rate[2];
+        }
+      }
+    }
+    domain->lamda2x(nlocal);
+  }
 }
 
 
@@ -1252,6 +1309,8 @@ void FixSRD::reset_velocities_small()
   double vsq,tbin,scale;
   double *vave,*xlamda;
   double vstream[3];
+  double *h_rate = domain->h_rate;
+  double *h_ratelo = domain->h_ratelo;
   double vransum[3];                                                 //JCP: Added this for MPCD Andersen Thermostat
   double mass_bin,mass_particle,mboltz_width;                         //JCP: added this for use in computing mass-weighted velocity and width of Maxwell-Boltzmann distribution
 
@@ -1301,6 +1360,22 @@ void FixSRD::reset_velocities_small()
       iz = static_cast<int> ((x[i][2]-corner[2])*bininv1z);
       iz = MAX(iz,binlo[2]);
       iz = MIN(iz,binhi[2]);
+
+      if (deformflag) {
+        // shift velocities in last bins
+        if (domain->xperiodic && ix == nbin1x) {
+          v[i][0] -= h_rate[0];
+        }
+        if (domain->yperiodic && iy == nbin1y) {
+          v[i][0] -= h_rate[5];
+          v[i][1] -= h_rate[1];
+        }
+        if (domain->zperiodic && iz == nbin1z) {
+          v[i][0] -= h_rate[4];
+          v[i][1] -= h_rate[3];
+          v[i][2] -= h_rate[2];
+        }
+      }
 
       ibin = (iz-binlo[2])*nbiny*nbinx + (iy-binlo[1])*nbinx + (ix-binlo[0]);
       binnext[i] = binhead[ibin];
@@ -1372,7 +1447,7 @@ void FixSRD::reset_velocities_small()
   int dof_temp = 1;
   int dof_tstat;
   if (tstat) {
-    if (deformflag) dof_tstat = dof_temp = 0;
+    if (deformflag && !unbiasflag) dof_tstat = dof_temp = 0;
     else dof_tstat = 1;
   }
 
@@ -1380,8 +1455,6 @@ void FixSRD::reset_velocities_small()
   srd_bin_count = 0;
 
   if (dimension == 2) axis = 2;
-  double *h_rate = domain->h_rate;
-  double *h_ratelo = domain->h_ratelo;
 
   if(mpcdat) {                                                      //JCP: If MPCD Andersen Thermostat
 
@@ -1406,9 +1479,9 @@ void FixSRD::reset_velocities_small()
         if (mask[j] & smallgroupbit) mboltz_width = sigma_small; 
 //        while(1){
      	  v[j][0] = mboltz_width * random->gaussian();
-	  v[j][1] = mboltz_width * random->gaussian();
-	  v[j][2] = mboltz_width * random->gaussian();
-	  vsq = v[j][0]*v[j][0] + v[j][1]*v[j][1] + v[j][2]*v[j][2];
+        v[j][1] = mboltz_width * random->gaussian();
+        v[j][2] = mboltz_width * random->gaussian();
+        vsq = v[j][0]*v[j][0] + v[j][1]*v[j][1] + v[j][2]*v[j][2];
 //	  if (vsq <= vmaxsq) break;
 //	}
 
@@ -1448,7 +1521,7 @@ void FixSRD::reset_velocities_small()
         if (mask[j] & smallgroupbit) mass_particle = mass_small;     
         vsq += (u[0]*u[0] + u[1]*u[1] + u[2]*u[2])*mass_particle;   
           
-        if (deformflag) {                                            //JCP:  Add cell's average velocity, or stream velocity if deforming box
+        if (deformflag && !unbiasflag) {                                            //JCP:  Add cell's average velocity, or stream velocity if deforming box
           xlamda = vbin[i].xctr;
           vstream[0] = h_rate[0]*xlamda[0] + h_rate[5]*xlamda[1] +
             h_rate[4]*xlamda[2] + h_ratelo[0];
@@ -1528,7 +1601,7 @@ void FixSRD::reset_velocities_small()
         // vsum is already average velocity                          //JCP: Note that vsum here is the center of mass velocity, b/c vave above is a pointer, hence its already been weighted and divided my particle masses
         vave = vbin[i].vsum;
 
-        if (deformflag) {
+        if (deformflag && !unbiasflag) {
           xlamda = vbin[i].xctr;
           vstream[0] = h_rate[0]*xlamda[0] + h_rate[5]*xlamda[1] +
             h_rate[4]*xlamda[2] + h_ratelo[0];
@@ -1643,6 +1716,39 @@ void FixSRD::reset_velocities_small()
           MathExtra::scale3(vmax/sqrt(vsq),v[i]);
         }
       }
+  }
+
+  // undo velocity remap (only if using PUT or tstat no)
+  if (deformflag && (unbiasflag || !tstat)) {
+    domain->x2lamda(nlocal);
+    for (i = 0; i < nlocal; i++) {
+      if ((mask[i] & groupbit) || (mask[i] & smallgroupbit )) {
+
+        ix = static_cast<int>((x[i][0] - corner[0]) * bininv1x);
+        ix = MAX(ix, binlo[0]);
+        ix = MIN(ix, binhi[0]);
+        iy = static_cast<int>((x[i][1] - corner[1]) * bininv1y);
+        iy = MAX(iy, binlo[1]);
+        iy = MIN(iy, binhi[1]);
+        iz = static_cast<int>((x[i][2] - corner[2]) * bininv1z);
+        iz = MAX(iz, binlo[2]);
+        iz = MIN(iz, binhi[2]);
+
+        if (domain->xperiodic && ix == nbin1x) {
+          v[i][0] += h_rate[0];
+        }
+        if (domain->yperiodic && iy == nbin1y) {
+          v[i][0] += h_rate[5];
+          v[i][1] += h_rate[1];
+        }
+        if (domain->zperiodic && iz == nbin1z) {
+          v[i][0] += h_rate[4];
+          v[i][1] += h_rate[3];
+          v[i][2] += h_rate[2];
+        }
+      }
+    }
+    domain->lamda2x(nlocal);
   }
 }
 
@@ -3117,7 +3223,9 @@ void FixSRD::parameterize()
 
   dt_big = update->dt;
   dt_srd = nevery * update->dt;
-  fprintf(screen,"nevery, dt_srd, dt_big %d %g %g  \n" ,nevery,dt_srd,dt_big);
+  if (me == 0) {
+    fprintf(screen,"nevery, dt_srd, dt_big %d %g %g  \n" ,nevery,dt_srd,dt_big);
+  }
 
   // maxbigdiam,minbigdiam = max/min diameter of any big particle
   // big particle must either have radius > 0 or shape > 0 defined
@@ -3398,8 +3506,9 @@ void FixSRD::parameterize()
     diffusivity = ((force->boltz*temperature_srd*dt_srd)/(2.0*mass_srd*force->mvv2e))*((3.0*srd_per_cell)/(srd_per_cell - 1.0 + exp(-srd_per_cell)) - 1.0);
 
     schmidt = viscosity/diffusivity;
-
-    fprintf(screen,"gridsrd, dt_srd, srd_per_cell, kT, mass_srd, mmv2e %g %g %g %g %g %g \n" ,gridsrd, dt_srd,srd_per_cell, force->boltz*temperature_srd, mass_srd,force->mvv2e);
+    if (me == 0) {
+      fprintf(screen,"gridsrd, dt_srd, srd_per_cell, kT, mass_srd, mmv2e %g %g %g %g %g %g \n" ,gridsrd, dt_srd,srd_per_cell, force->boltz*temperature_srd, mass_srd,force->mvv2e);
+    }
 
   } else {
     viscosity =
