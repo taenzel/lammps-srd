@@ -61,7 +61,7 @@ In each SRD collision cell $c$,
 
 - $N_c$ is the number of particles (solvent and `small` colloids) in the cell,
 - $M_c = \sum_{i \in c} m_i$ is the total mass in the cell,
-- ${v}_c = \frac{1}{M_c}\sum_{i \in c} m_i {v}_i$ is the cell center-of-mass velocity,
+- $`\mathbf{v}_c = \frac{1}{M_c}\sum_{i \in c} m_i \mathbf{v}_i`$ is the cell center-of-mass velocity,
 - $T_c$ is the cell temperature measured relative to $\mathbf{v}_c$,
 - $T_0$ is the target temperature
 - $\zeta_c = \sqrt{\frac{T_0}{T_c}}$ is the rescaling factor of the thermostat
