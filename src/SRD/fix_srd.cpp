@@ -24,7 +24,9 @@
 
 /*
   Updated by T.Ikeda (Kyoto Institute Of Technology) for new version
-  Updated by Victor Tänzel for profile-unbiased thermostat
+  Updated by Victor Tänzel (University of Freiburg)
+    (i) repairing shear flow
+    (ii) profile-unbiased thermostat
 */
 
 
