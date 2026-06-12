@@ -9,6 +9,7 @@ This repository contributes by
 
 - fixing cell handling during shear flow,
 - adding a profile-unbiased thermostat.
+- On top, an implementation of Random MPC is contained.
 
 See [this issue](https://github.com/lammps/lammps/pull/4590) for further background.
 
@@ -34,6 +35,11 @@ fix 1 solvent srd 100 NULL 1.0 1.0 49894 &
     small ${mass_small}
 ```
 
+For Random MPC, the arguments are: $N$, the period of the collision step, $T$, the temperature of the virtual SRD particles, $m_\mathrm{SRD}$, their mass, and a seed.
+```
+fix 1 all rsrd 100 1.0 10 1.0 42
+```
+
 ## Known limitations
 - The code has been tested, but I do not guarantee its correctness.
 - I did not test the Andersen thermostat, but still modified its code to support the `unbiased true` functionality.
@@ -52,7 +58,7 @@ make mpi -j <number of procs>
 ```
 
 ## Citation
-Please cite the appropriate LAMMPS references, the corresponding article from the Palmer group, their github repository, this repository if you used its new features, and whatever else you deem appropriate.
+Please cite the appropriate LAMMPS references, the corresponding article from the Palmer group, their github repository, this repository if you used its new features, and whatever else you deem appropriate. For Random MPC, cite the related literature and this repository.
 
 ## Collision step and thermostat
 The [LAMMPS documentation](https://docs.lammps.org/fix_srd.html) and the [research articles](https://docs.lammps.org/fix_srd.html#default) provide some information on their SRD collision and thermostat scheme. By the way, additional thermostats may be found in [this code](https://matsci.org/t/inducing-flow-in-an-srd-fluid/25810/7). The following provides more details about the SRD thermostat and what is meant with profile-biased and -unbiased.
@@ -91,3 +97,14 @@ $$
 $$
 
 When a `fix deform` is given, the velocity profile may then build up due to the boundary conditions alone.
+
+## Random MPC
+Random MPC is a method that is close to MPCD with SRD collision step, but without hydrodynamic interactions. No MPC particles are needed. Instead, the idea is to couple each solute particle to an effective solvent momentum drawn from a Maxwell-Boltzmann distribution. Shear flow can be accounted for, a linear shear profile is assumed.
+
+You can find more information for example in 
+> Ripoll, M., Winkler, R. G., & Gompper, G. (2007).
+> *Hydrodynamic screening of star polymers in shear flow.*
+> *The European Physical Journal E*, 23(4), 349-354.
+
+## Practical advice
+The implementation in HOOMD is probably preferable, as soon as it is available.
