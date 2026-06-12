@@ -56,11 +56,11 @@ FixRSRD::FixRSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
   seed = utils::inumeric(FLERR, arg[7], false, lmp);
   
   // error check
-  if (nevery <= 0) error->all(FLERR, "Requires non-negative nevery");
-  if (temperature_srd <= 0.0) error->all(FLERR, "Requires non-negative temperature");
-  if (srd_per_cell <= 0) error->all(FLERR, "Requires non-negative srd density");
-  if (mass_srd <= 0) error->all(FLERR, "Requires non-negative srd mass");
-  if (seed <= 0) error->all(FLERR, "Requires non-negative seed");
+  if (nevery <= 0) error->all(FLERR, "Requires positive nevery");
+  if (temperature_srd <= 0.0) error->all(FLERR, "Requires positive temperature");
+  if (srd_per_cell <= 0) error->all(FLERR, "Requires positive srd density");
+  if (mass_srd <= 0) error->all(FLERR, "Requires positive srd mass");
+  if (seed <= 0) error->all(FLERR, "Requires positive seed");
 
   // initialize Marsaglia RNG with processor-unique seed
   me = comm->me;
@@ -95,6 +95,7 @@ void FixRSRD::setup(int vflag)
   double *rmass = atom->rmass;
   double *mass = atom->mass;
   int *type = atom->type;
+  mass_particle = 0.0;
   for (int i = 0; i < nlocal; i++) {
     if (mask[i] & groupbit) {
       if (rmass) {
@@ -141,54 +142,55 @@ void FixRSRD::reset_velocities()
   if (lebcflag) domain->x2lamda(nlocal);
 
   for (j = 0; j < nlocal; j++) {
+    if (mask[j] & groupbit) {
     
-    irandom = static_cast<int>(6.0 * random->uniform());
-    sign = irandom % 2;
-    axis = irandom / 2;
+      irandom = static_cast<int>(6.0 * random->uniform());
+      sign = irandom % 2;
+      axis = irandom / 2;
 
-    // Draw a random solvent momentum to which we will couple
-    psolvent[0] = random->gaussian() * sigma;
-    psolvent[1] = random->gaussian() * sigma;
-    psolvent[2] = random->gaussian() * sigma;
+      // Draw a random solvent momentum to which we will couple
+      psolvent[0] = random->gaussian() * sigma;
+      psolvent[1] = random->gaussian() * sigma;
+      psolvent[2] = random->gaussian() * sigma;
 
-    // Calculate streaming velocity, add to momentum to random momentum
-    if (lebcflag) {
-      vstream[0] = h_rate[0] * x[j][0] + h_rate[5] * x[j][1] + h_rate[4] * x[j][2] + h_ratelo[0];
-      vstream[1] = h_rate[1] * x[j][1] + h_rate[3] * x[j][2] + h_ratelo[1];
-      vstream[2] = h_rate[2] * x[j][2] + h_ratelo[2];
+      // Calculate streaming velocity, add to momentum to random momentum
+      if (lebcflag) {
+        vstream[0] = h_rate[0] * x[j][0] + h_rate[5] * x[j][1] + h_rate[4] * x[j][2] + h_ratelo[0];
+        vstream[1] = h_rate[1] * x[j][1] + h_rate[3] * x[j][2] + h_ratelo[1];
+        vstream[2] = h_rate[2] * x[j][2] + h_ratelo[2];
 
-      psolvent[0] += srd_per_cell * mass_srd * vstream[0];
-      psolvent[1] += srd_per_cell * mass_srd * vstream[1];
-      psolvent[2] += srd_per_cell * mass_srd * vstream[2];
+        psolvent[0] += srd_per_cell * mass_srd * vstream[0];
+        psolvent[1] += srd_per_cell * mass_srd * vstream[1];
+        psolvent[2] += srd_per_cell * mass_srd * vstream[2];
+      }
+
+      // Calculate the randomSRD center of mass velocity
+      vave[0] = (mass_particle*v[j][0] + psolvent[0]) *  inv_mass_part_solv;
+      vave[1] = (mass_particle*v[j][1] + psolvent[1]) *  inv_mass_part_solv;
+      vave[2] = (mass_particle*v[j][2] + psolvent[2]) *  inv_mass_part_solv;
+
+      // Perform the collision step as in fix_srd.cpp
+      if (axis == 0) {
+        u[0] = v[j][0] - vave[0];
+        u[1] = sign ? v[j][2] - vave[2] : vave[2] - v[j][2];
+        u[2] = sign ? vave[1] - v[j][1] : v[j][1] - vave[1];
+      } else if (axis == 1) {
+        u[1] = v[j][1] - vave[1];
+        u[0] = sign ? v[j][2] - vave[2] : vave[2] - v[j][2];
+        u[2] = sign ? vave[0] - v[j][0] : v[j][0] - vave[0];
+      } else {
+        u[2] = v[j][2] - vave[2];
+        u[1] = sign ? v[j][0] - vave[0] : vave[0] - v[j][0];
+        u[0] = sign ? vave[1] - v[j][1] : v[j][1] - vave[1];
+      }
+
+      v[j][0] = u[0] + vave[0];
+      v[j][1] = u[1] + vave[1];
+      v[j][2] = u[2] + vave[2];
     }
-
-    // Calculate the randomSRD center of mass velocity
-    vave[0] = (mass_particle*v[j][0] + psolvent[0]) *  inv_mass_part_solv;
-    vave[1] = (mass_particle*v[j][1] + psolvent[1]) *  inv_mass_part_solv;
-    vave[2] = (mass_particle*v[j][2] + psolvent[2]) *  inv_mass_part_solv;
-
-    // Perform the collision step as in fix_srd.cpp
-    if (axis == 0) {
-      u[0] = v[j][0] - vave[0];
-      u[1] = sign ? v[j][2] - vave[2] : vave[2] - v[j][2];
-      u[2] = sign ? vave[1] - v[j][1] : v[j][1] - vave[1];
-    } else if (axis == 1) {
-      u[1] = v[j][1] - vave[1];
-      u[0] = sign ? v[j][2] - vave[2] : vave[2] - v[j][2];
-      u[2] = sign ? vave[0] - v[j][0] : v[j][0] - vave[0];
-    } else {
-      u[2] = v[j][2] - vave[2];
-      u[1] = sign ? v[j][0] - vave[0] : vave[0] - v[j][0];
-      u[0] = sign ? vave[1] - v[j][1] : v[j][1] - vave[1];
-    }
-
-    v[j][0] = u[0] + vave[0];
-    v[j][1] = u[1] + vave[1];
-    v[j][2] = u[2] + vave[2];
+    
+    if (lebcflag) domain->lamda2x(nlocal);
   }
-  
-  if (lebcflag) domain->lamda2x(nlocal);
-
 }
 
 

@@ -34,23 +34,21 @@ class FixRSRD : public Fix {
   void post_force(int) override;
 
  private:
-  int me, nprocs;
+  int me;
 
   // input
   int seed;  // seed for the RNG of the random momentum
-  double temperature_srd; // temperature
-  double srd_per_cell;  // number of SRD particle the big particle couples to
-  double mass_srd; // mass of the imaginary SRD particles
+  double temperature_srd;  // temperature
+  double srd_per_cell;   // number of SRD particles the big particle couples to
+  double mass_srd;  // mass of the imaginary SRD particles
 
   int lebcflag;  // 1 if fix deform remap v present, 0 else
-  double mass_particle; // mass of the big particle
-  double mass_solvent; // mass of the solvent a big particle couples to
-  double inv_mass_part_solv; // 1 / sum of particle and solvent mass
+  double mass_particle;  // mass of the big particle
+  double mass_solvent;  // mass of the solvent a big particle couples to
+  double inv_mass_part_solv;  // 1 / sum of particle and solvent mass
   
   double sigma;
 
-
-//   int initflag, setupflag, reneighflag;
   class RanMars *random;
 
   void reset_velocities();
