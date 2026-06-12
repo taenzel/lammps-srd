@@ -99,7 +99,7 @@ $$
 When a `fix deform` is given, the velocity profile may then build up due to the boundary conditions alone.
 
 ## Random MPC
-Random MPC is a method that is close to MPCD with SRD collision step, but without hydrodynamic interactions. No MPC particles are needed. Instead, the idea is to couple each solute particle to an effective solvent momentum drawn from a Maxwell-Boltzmann distribution. Shear flow can be accounted for, a linear shear profile is assumed.
+Random MPC is a method that is close to MPCD with SRD collision step, but without hydrodynamic interactions. No MPC particles are needed. Instead, the idea is to couple each solute particle to an effective solvent momentum $\mathbf{P}$ by performing a collision step with this momentum $\mathbf{P}$ and the colloid particle. The components of $\mathbf{P}$ are drawn from a normal distribution with variance $m\rho k_B T$, where $\rho$ and $m$ are the MPC density and MPC particle mass we want to emulate, and zero mean under quiescent conditions.  Shear flow can be accounted for, a linear shear profile is assumed by setting the mean to $m \rho (\dot{\gamma} y_i, 0, 0)$, where $y_i$ is the $y$ position of the particle. In this case, the shear flow is in $x$ and the gradient in $y$, but all other settings are also implemented.
 
 You can find more information for example in 
 > Ripoll, M., Winkler, R. G., & Gompper, G. (2007).
