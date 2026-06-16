@@ -188,9 +188,9 @@ void FixRSRD::reset_velocities()
       v[j][1] = u[1] + vave[1];
       v[j][2] = u[2] + vave[2];
     }
-    
-    if (lebcflag) domain->lamda2x(nlocal);
   }
+
+  if (lebcflag) domain->lamda2x(nlocal);
 }
 
 
