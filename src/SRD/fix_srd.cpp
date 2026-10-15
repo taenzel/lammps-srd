@@ -27,6 +27,7 @@
   Updated by Victor Tänzel (University of Freiburg)
     (i) repairing shear flow
     (ii) profile-unbiased thermostat
+    (iii) boundary velocity shift
 */
 
 
@@ -220,7 +221,7 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
       else error->all(FLERR,"Illegal fix srd command");
       iarg += 2;
     } else if (strcmp(arg[iarg], "unbiased") == 0) {
-      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix srd command: stream");
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix srd command");
       if (strcmp(arg[iarg+1],"no") == 0) unbiasflag = 0;
       else if (strcmp(arg[iarg+1],"yes") == 0) unbiasflag = 1;
       else error->all(FLERR,"Illegal fix srd command");
@@ -279,7 +280,8 @@ FixSRD::FixSRD(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg)
     error->all(FLERR,"Illegal fix srd command");
   if ((shiftuser == SHIFT_YES || shiftuser == SHIFT_POSSIBLE) &&
       shiftseed <= 0) error->all(FLERR,"Illegal fix srd command");
-  if (unbiasflag && !tstat) error->all(FLERR, "PUT requires tstat");
+  if (unbiasflag && !tstat && !mpcdat)
+    error->all(FLERR, "Fix srd unbiased yes requires tstat yes or mpcdat yes");
 
   // initialize Marsaglia RNG with processor-unique seed
 
@@ -446,10 +448,11 @@ void FixSRD::init()
   for (int i = 0; i < modify->nfix; i++) {
     if (fixes[i]->box_change & BOX_CHANGE_SIZE) change_size = 1;
     if (fixes[i]->box_change & BOX_CHANGE_SHAPE) change_shape = 1;
-    if (strcmp(fixes[i]->style, "deform") == 0) {
+    if (utils::strmatch(fixes[i]->style, "^deform")) {
       deformflag = 1;
       auto deform = dynamic_cast<FixDeform *>(modify->fix[i]);
-      if ((deform->box_change & BOX_CHANGE_SHAPE) && deform->remapflag != Domain::V_REMAP)
+      if (deform && (deform->box_change & BOX_CHANGE_SHAPE) &&
+          deform->remapflag != Domain::V_REMAP)
         error->all(FLERR, "Using fix srd with inconsistent fix deform remap option");
     }
   }
@@ -1078,28 +1081,17 @@ void FixSRD::reset_velocities()
       iz = MAX(iz,binlo[2]);
       iz = MIN(iz,binhi[2]);
 
-      if (deformflag) {
-        // shift velocities in last bins
-        if (domain->xperiodic && ix == nbin1x) {
-          v[i][0] -= h_rate[0];
-        }
-        if (domain->yperiodic && iy == nbin1y) {
-          v[i][0] -= h_rate[5];
-          v[i][1] -= h_rate[1];
-        }
-        if (domain->zperiodic && iz == nbin1z) {
-          v[i][0] -= h_rate[4];
-          v[i][1] -= h_rate[3];
-          v[i][2] -= h_rate[2];
-        }
-      }
-
       ibin = (iz-binlo[2])*nbiny*nbinx + (iy-binlo[1])*nbinx + (ix-binlo[0]);
       binnext[i] = binhead[ibin];
       binhead[ibin] = i;
     }
   
   if (triclinic) domain->lamda2x(nlocal);
+
+  // map velocities in the last (periodic image) bins into one reference frame 
+  // per bin
+
+  boundary_vshift(-1.0, 0);
 
   // for each bin I have particles contributing to:
   // compute summed v of particles in that bin
@@ -1250,7 +1242,12 @@ void FixSRD::reset_velocities()
   srd_bin_temp *= tfactor;
 
 
-  // rescale any too-large velocities
+  // undo the velocity shift of the last bins if needed
+
+  if (tstat && deformflag && !unbiasflag) boundary_vshift(1.0, 2);
+  else boundary_vshift(1.0, 0);
+
+  // rescale any too-large velocities, in the lab frame
 
   if (rescale_rotate) {
     for (i = 0; i < nlocal; i++)
@@ -1261,38 +1258,6 @@ void FixSRD::reset_velocities()
           MathExtra::scale3(vmax/sqrt(vsq),v[i]);
         }
       }
-  }
-
-  // undo velocity remap (only if using PUT or tstat no)
-  if (deformflag && (unbiasflag || !tstat)) {
-    domain->x2lamda(nlocal);
-    for (i = 0; i < nlocal; i++) {
-      if (mask[i] & groupbit) {
-        ix = static_cast<int>((x[i][0] - corner[0]) * bininv1x);
-        ix = MAX(ix, binlo[0]);
-        ix = MIN(ix, binhi[0]);
-        iy = static_cast<int>((x[i][1] - corner[1]) * bininv1y);
-        iy = MAX(iy, binlo[1]);
-        iy = MIN(iy, binhi[1]);
-        iz = static_cast<int>((x[i][2] - corner[2]) * bininv1z);
-        iz = MAX(iz, binlo[2]);
-        iz = MIN(iz, binhi[2]);
-
-        if (domain->xperiodic && ix == nbin1x) {
-          v[i][0] += h_rate[0];
-        }
-        if (domain->yperiodic && iy == nbin1y) {
-          v[i][0] += h_rate[5];
-          v[i][1] += h_rate[1];
-        }
-        if (domain->zperiodic && iz == nbin1z) {
-          v[i][0] += h_rate[4];
-          v[i][1] += h_rate[3];
-          v[i][2] += h_rate[2];
-        }
-      }
-    }
-    domain->lamda2x(nlocal);
   }
 }
 
@@ -1363,28 +1328,17 @@ void FixSRD::reset_velocities_small()
       iz = MAX(iz,binlo[2]);
       iz = MIN(iz,binhi[2]);
 
-      if (deformflag) {
-        // shift velocities in last bins
-        if (domain->xperiodic && ix == nbin1x) {
-          v[i][0] -= h_rate[0];
-        }
-        if (domain->yperiodic && iy == nbin1y) {
-          v[i][0] -= h_rate[5];
-          v[i][1] -= h_rate[1];
-        }
-        if (domain->zperiodic && iz == nbin1z) {
-          v[i][0] -= h_rate[4];
-          v[i][1] -= h_rate[3];
-          v[i][2] -= h_rate[2];
-        }
-      }
-
       ibin = (iz-binlo[2])*nbiny*nbinx + (iy-binlo[1])*nbinx + (ix-binlo[0]);
       binnext[i] = binhead[ibin];
       binhead[ibin] = i;
     }
 
   if (triclinic) domain->lamda2x(nlocal);
+
+  // map velocities in the last (periodic image) bins into one reference frame 
+  // per bin
+
+  boundary_vshift(-1.0, 0);
 
   // for each bin I have particles contributing to:
   // compute summed v of particles in that bin
@@ -1692,7 +1646,7 @@ void FixSRD::reset_velocities_small()
 
    for (i = 0; i < nbins; i++) {                                     //JCP: Compute difference between initial and final linear moment, check if nonzero
       for(j = 0; j < 3; j++){
-        if(me == 0) {
+        if(me == 0 && screen) {
           if(debugflag == 1){
             if(fabs(vbin[i].vsum[j]-vbin[i].linmom[j]) > 1.0E-13) {
              fprintf(screen,"Debug: Me %d Bin %d, srd %d, small, %d, component %d, initial %g, final %g,  diff: %g\n",me,i,vbin[i].n,vbin[i].m,j,vbin[i].linmom[j],vbin[i].vsum[j],vbin[i].vsum[j]-vbin[i].linmom[j]);
@@ -1705,9 +1659,17 @@ void FixSRD::reset_velocities_small()
     }
   }
 
+  // undo the velocity shift of the last bins
+  // except where a profile-biased thermostat (unbiased no) has already set
+  //   velocities from vstream of the bin:
+  //   MPCD Andersen thermostat (mpcdat yes): every occupied bin
+  //   SRD rescaling thermostat (tstat yes): bins with > 1 particle
 
+  if (deformflag && !unbiasflag && mpcdat) boundary_vshift(1.0, 1);
+  else if (deformflag && !unbiasflag && tstat) boundary_vshift(1.0, 2);
+  else boundary_vshift(1.0, 0);
 
-  // rescale any too-large velocities
+  // rescale any too-large velocities, in the lab frame
 
   if (rescale_rotate) {
     for (i = 0; i < nlocal; i++)
@@ -1719,38 +1681,71 @@ void FixSRD::reset_velocities_small()
         }
       }
   }
+}
 
-  // undo velocity remap (only if using PUT or tstat no)
-  if (deformflag && (unbiasflag || !tstat)) {
-    domain->x2lamda(nlocal);
-    for (i = 0; i < nlocal; i++) {
-      if ((mask[i] & groupbit) || (mask[i] & smallgroupbit )) {
+/* ----------------------------------------------------------------------
+   shift velocities of particles in the last bins, i.e. bins that are the
+     periodic images of the first bins
+   sign = -1: map them into the velocity frame of the first bins, as
+     Domain::pbc() does for fix deform with remap v, so that each collision
+     cell / bin is treated in one consistent velocity frame
+   sign = +1: undo that shift after the collision
+   skipmin > 0: do not undo in bins with >= skipmin particles (SRD + small,
+     summed over all procs), because a profile-biased thermostat has already
+     set their velocities from vstream of the bin
+   skipmin = 0: shift/undo all bins
+------------------------------------------------------------------------- */
 
-        ix = static_cast<int>((x[i][0] - corner[0]) * bininv1x);
-        ix = MAX(ix, binlo[0]);
-        ix = MIN(ix, binhi[0]);
-        iy = static_cast<int>((x[i][1] - corner[1]) * bininv1y);
-        iy = MAX(iy, binlo[1]);
-        iy = MIN(iy, binhi[1]);
-        iz = static_cast<int>((x[i][2] - corner[2]) * bininv1z);
-        iz = MAX(iz, binlo[2]);
-        iz = MIN(iz, binhi[2]);
+void FixSRD::boundary_vshift(double sign, int skipmin)
+{
+  if (!domain->deform_vremap) return;
 
-        if (domain->xperiodic && ix == nbin1x) {
-          v[i][0] += h_rate[0];
-        }
-        if (domain->yperiodic && iy == nbin1y) {
-          v[i][0] += h_rate[5];
-          v[i][1] += h_rate[1];
-        }
-        if (domain->zperiodic && iz == nbin1z) {
-          v[i][0] += h_rate[4];
-          v[i][1] += h_rate[3];
-          v[i][2] += h_rate[2];
-        }
-      }
+  int *binlo = shifts[shiftflag].binlo;
+  int nbins = shifts[shiftflag].nbins;
+  int nbinx = shifts[shiftflag].nbinx;
+  int nbiny = shifts[shiftflag].nbiny;
+  BinAve *vbin = shifts[shiftflag].vbin;
+
+  double *h_rate = domain->h_rate;
+  int deformbit = domain->deform_groupbit;
+  int *mask = atom->mask;
+  double **v = atom->v;
+
+  for (int ibin = 0; ibin < nbins; ibin++) {
+    if (binhead[ibin] < 0) continue;
+
+    int ix = ibin % nbinx + binlo[0];
+    int iy = (ibin / nbinx) % nbiny + binlo[1];
+    int iz = ibin / (nbinx*nbiny) + binlo[2];
+    int xlast = domain->xperiodic && ix == nbin1x;
+    int ylast = domain->yperiodic && iy == nbin1y;
+    int zlast = domain->zperiodic && iz == nbin1z;
+    if (!xlast && !ylast && !zlast) continue;
+
+    if (skipmin > 0) {
+      int count = vbin[ibin].n;
+      if (smallexist) count += vbin[ibin].m;
+      if (count >= skipmin) continue;
     }
-    domain->lamda2x(nlocal);
+
+    double dv[3] = {0.0, 0.0, 0.0};
+    if (xlast) dv[0] += h_rate[0];
+    if (ylast) {
+      dv[0] += h_rate[5];
+      dv[1] += h_rate[1];
+    }
+    if (zlast) {
+      dv[0] += h_rate[4];
+      dv[1] += h_rate[3];
+      dv[2] += h_rate[2];
+    }
+
+    for (int j = binhead[ibin]; j >= 0; j = binnext[j])
+      if (mask[j] & deformbit) {
+        v[j][0] += sign*dv[0];
+        v[j][1] += sign*dv[1];
+        v[j][2] += sign*dv[2];
+      }
   }
 }
 
@@ -3225,7 +3220,7 @@ void FixSRD::parameterize()
 
   dt_big = update->dt;
   dt_srd = nevery * update->dt;
-  if (me == 0) {
+  if (me == 0 && screen) {
     fprintf(screen,"nevery, dt_srd, dt_big %d %g %g  \n" ,nevery,dt_srd,dt_big);
   }
 
@@ -3316,20 +3311,28 @@ void FixSRD::parameterize()
   double *mass = atom->mass;
   int *type = atom->type;
 
+  // mass_srd must be known on all procs, also on procs that currently own
+  //   no SRD particle, b/c it enters the mass-weighted bin averages
+
   int flag = 0;
-  mass_srd = 0.0;
+  double mass_one = 0.0;
+
+  for (int i = 0; i < nlocal; i++)
+    if (mask[i] & groupbit) {
+      mass_one = rmass ? rmass[i] : mass[type[i]];
+      break;
+    }
+  MPI_Allreduce(&mass_one,&mass_srd,1,MPI_DOUBLE,MPI_MAX,world);
+  if (mass_srd <= 0.0) error->all(FLERR,"Fix srd requires SRD particles with mass > 0");
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
       if (rmass) {
-        if (mass_srd == 0.0) mass_srd = rmass[i];
-        else if (rmass[i] != mass_srd) flag = 1;
+        if (rmass[i] != mass_srd) flag = 1;
       } else {
-        if (mass_srd == 0.0) mass_srd = mass[type[i]];
-        else if (mass[type[i]] != mass_srd) flag = 1;
+        if (mass[type[i]] != mass_srd) flag = 1;
       }
     }
-    
 
   int flagall;
   MPI_Allreduce(&flag,&flagall,1,MPI_INT,MPI_MAX,world);
@@ -3508,7 +3511,7 @@ void FixSRD::parameterize()
     diffusivity = ((force->boltz*temperature_srd*dt_srd)/(2.0*mass_srd*force->mvv2e))*((3.0*srd_per_cell)/(srd_per_cell - 1.0 + exp(-srd_per_cell)) - 1.0);
 
     schmidt = viscosity/diffusivity;
-    if (me == 0) {
+    if (me == 0 && screen) {
       fprintf(screen,"gridsrd, dt_srd, srd_per_cell, kT, mass_srd, mmv2e %g %g %g %g %g %g \n" ,gridsrd, dt_srd,srd_per_cell, force->boltz*temperature_srd, mass_srd,force->mvv2e);
     }
 
@@ -4299,13 +4302,20 @@ void FixSRD::setup_velocity_shift(int ishift, int dynamic)
   // set xctr for all nbins in lamda units so can later compute vstream of bin
 
   if ((tstat && deformflag) || (mpcdat && deformflag) ) {             //JCP: Added case for MPCDAT and box deformation
+    // corner is in box units for orthogonal boxes, convert to lamda units
+    double clamda[3] = {corner[0], corner[1], corner[2]};
+    if (triclinic == 0) {
+      clamda[0] = (corner[0] - domain->boxlo[0]) * domain->h_inv[0];
+      clamda[1] = (corner[1] - domain->boxlo[1]) * domain->h_inv[1];
+      clamda[2] = (corner[2] - domain->boxlo[2]) * domain->h_inv[2];
+    }
     m = 0;
     for (k = 0; k < nbinz; k++)
       for (j = 0; j < nbiny; j++)
         for (i = 0; i < nbinx; i++) {
-          vbin[m].xctr[0] = corner[0] + (i+binlo[0]+0.5)/nbin1x;
-          vbin[m].xctr[1] = corner[1] + (j+binlo[1]+0.5)/nbin1y;
-          vbin[m].xctr[2] = corner[2] + (k+binlo[2]+0.5)/nbin1z;
+          vbin[m].xctr[0] = clamda[0] + (i+binlo[0]+0.5)/nbin1x;
+          vbin[m].xctr[1] = clamda[1] + (j+binlo[1]+0.5)/nbin1y;
+          vbin[m].xctr[2] = clamda[2] + (k+binlo[2]+0.5)/nbin1z;
           m++;
         }
   }
