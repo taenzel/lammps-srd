@@ -57,7 +57,7 @@ class FixSRD : public Fix {
   int bigexist,biggroup,biggroupbit;
   int smallexist, smallgroup, smallgroupbit;                         //JCP: Added for small particles
   int collidestyle,lamdaflag,overlap,insideflag,exactflag,maxbounceallow;
-  int cubicflag,shiftuser,shiftseed,shiftflag,tstat,mpcdat,unbiasflag,tstat_small;         //JCP: Added mpcdat flag
+  int cubicflag,shiftuser,shiftseed,shiftflag,tstat,mpcdat,unbiasflag;         //JCP: Added mpcdat flag
   int rescale_rotate,rescale_collide;
   double gridsrd,gridsearch,lamda,radfactor,cubictol;
   int triclinic,change_size,change_shape,deformflag;
@@ -207,6 +207,7 @@ class FixSRD : public Fix {
 
   void reset_velocities();
   void reset_velocities_small();                                     //JCP:  Function to reset velocities in the presence of small particles
+  void boundary_vshift(double, int);
   void vbin_comm(int);
   void vbin_pack(BinAve *, int, int *, double *);
   void vbin_unpack(double *, BinAve *, int, int *);
